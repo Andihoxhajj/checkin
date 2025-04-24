@@ -68,18 +68,18 @@ function Login() {
 
     try {
       const response = await axios.post('http://localhost:5000/api/worker-login', {
-        id: workerId,
+        email: workerId,
         password: password
       });
 
-      const { token, user } = response.data;
+      const { token, worker } = response.data;
       localStorage.setItem('token', token);
-      localStorage.setItem('user', JSON.stringify(user));
-      navigate('/worker', { state: { user } });
+      localStorage.setItem('user', JSON.stringify(worker));
+      navigate('/worker', { state: { user: worker } });
     } catch (error) {
       console.error('Login error:', error);
       if (error.response) {
-        setError(error.response.data.error || 'Invalid worker ID or password');
+        setError(error.response.data.error || 'Invalid worker email or password');
       } else if (error.request) {
         setError('Cannot connect to server. Please make sure the backend server is running.');
       } else {
@@ -212,13 +212,13 @@ function Login() {
             ) : (
               <form onSubmit={handleWorkerLogin} className="space-y-4">
                 <div>
-                  <label htmlFor="workerId" className="block text-sm font-medium text-gray-700">Worker ID</label>
+                  <label htmlFor="workerId" className="block text-sm font-medium text-gray-700">Email</label>
                   <input
                     id="workerId"
-                    type="text"
+                    type="email"
                     required
                     className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-red-500 focus:border-red-500"
-                    placeholder="Enter your worker ID"
+                    placeholder="Enter your email"
                     value={workerId}
                     onChange={(e) => setWorkerId(e.target.value)}
                     disabled={loading || serverStatus === 'error'}
@@ -226,9 +226,9 @@ function Login() {
                 </div>
 
                 <div>
-                  <label htmlFor="password" className="block text-sm font-medium text-gray-700">Password</label>
+                  <label htmlFor="workerPassword" className="block text-sm font-medium text-gray-700">Password</label>
                   <input
-                    id="password"
+                    id="workerPassword"
                     type="password"
                     required
                     className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-red-500 focus:border-red-500"
