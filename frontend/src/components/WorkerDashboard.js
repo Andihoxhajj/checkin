@@ -1,41 +1,100 @@
 import React, { useState, useEffect } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { motion } from 'framer-motion';
 import Navbar from './Navbar';
 
 function WorkerDashboard() {
   const location = useLocation();
+  const navigate = useNavigate();
   const user = location.state?.user;
   const [checkedIn, setCheckedIn] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [lastCheckIn, setLastCheckIn] = useState(null);
   const [message, setMessage] = useState('');
 
-  const handleCheckIn = async () => {
-    setLoading(true);
-    setError('');
+  const fetchStatus = async () => {
     try {
       const token = localStorage.getItem('token');
-      const response = await axios.post('http://localhost:5000/api/checkin', {
-        workerId: user.id
-      }, {
+      if (!token) {
+        navigate('/login');
+        return;
+      }
+
+      const response = await axios.get(`http://localhost:5000/api/attendance/status/${user.id}`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }
       });
-      
-      if (response.data.message) {
-        setMessage(response.data.message);
-        setCheckedIn(true);
-        setLastCheckIn(new Date());
-      } else {
-        setError('Unexpected response from server');
+
+      if (response.data.success) {
+        setCheckedIn(response.data.data.isCheckedIn);
+        if (response.data.data.lastCheckIn) {
+          setLastCheckIn(new Date(response.data.data.lastCheckIn));
+        }
       }
     } catch (err) {
-      console.error('Check-in error:', err.response?.data || err);
-      setError(err.response?.data?.error || 'Failed to check in. Please try again.');
+      console.error('Error fetching status:', err);
+      if (err.response?.status === 401) {
+        navigate('/login');
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!user || user.role !== 'worker') {
+      navigate('/login');
+      return;
+    }
+
+    fetchStatus();
+
+    // Set up polling to check status every 30 seconds
+    const intervalId = setInterval(fetchStatus, 30000);
+
+    // Clean up interval on component unmount
+    return () => clearInterval(intervalId);
+  }, [user, navigate]);
+
+  const handleCheckIn = async () => {
+    setLoading(true);
+    setError('');
+    setMessage('');
+    
+    try {
+      const token = localStorage.getItem('token');
+      if (!token) {
+        throw new Error('No authentication token found');
+      }
+
+      const response = await axios.post('http://localhost:5000/api/checkin', {
+        workerId: user.id
+      }, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      if (response.data.success) {
+        setMessage(response.data.message);
+        setCheckedIn(true);
+        setLastCheckIn(new Date(response.data.data.checkInTime));
+      } else {
+        setError(response.data.message || 'Failed to check in');
+      }
+    } catch (err) {
+      console.error('Check-in error:', err);
+      if (err.response?.status === 401) {
+        setError('Session expired. Please log in again.');
+        localStorage.removeItem('token');
+        navigate('/login');
+      } else {
+        setError(err.response?.data?.message || err.response?.data?.error || 'Failed to check in. Please try again.');
+      }
     } finally {
       setLoading(false);
     }
@@ -44,29 +103,67 @@ function WorkerDashboard() {
   const handleCheckOut = async () => {
     setLoading(true);
     setError('');
+    setMessage('');
+    
     try {
       const token = localStorage.getItem('token');
+      if (!token) {
+        throw new Error('No authentication token found');
+      }
+
+      console.log('Attempting checkout for worker:', user.id);
+      
       const response = await axios.post('http://localhost:5000/api/checkout', {
         workerId: user.id
       }, {
         headers: {
-          'Authorization': `Bearer ${token}`
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
         }
       });
       
-      if (response.data.message) {
+      console.log('Checkout response:', response.data);
+      
+      if (response.data.success) {
         setMessage(response.data.message);
         setCheckedIn(false);
+        setLastCheckIn(null);
+        // Immediately fetch the latest status
+        await fetchStatus();
       } else {
-        setError('Unexpected response from server');
+        console.error('Checkout failed:', response.data);
+        setError(response.data.message || 'Failed to check out');
       }
     } catch (err) {
-      console.error('Check-out error:', err.response?.data || err);
-      setError(err.response?.data?.error || 'Failed to check out. Please try again.');
+      console.error('Check-out error:', {
+        message: err.message,
+        response: err.response?.data,
+        status: err.response?.status
+      });
+      
+      if (err.response?.status === 401) {
+        setError('Session expired. Please log in again.');
+        localStorage.removeItem('token');
+        navigate('/login');
+      } else if (err.response?.data?.message) {
+        setError(err.response.data.message);
+      } else if (err.response?.data?.error) {
+        setError(err.response.data.error);
+      } else {
+        setError('Failed to check out. Please try again.');
+      }
     } finally {
       setLoading(false);
     }
   };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-100 flex items-center justify-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-gray-900"></div>
+      </div>
+    );
+  }
 
   if (!user || user.role !== 'worker') {
     return <div>Unauthorized access</div>;
