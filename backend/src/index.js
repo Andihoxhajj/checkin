@@ -324,13 +324,13 @@ app.post('/api/worker-login', async (req, res) => {
     if (id && id.includes('@')) {
       console.log('Searching by email:', id);
       result = await request
-        .input('email', sql.NVarChar, id)
-        .query('SELECT * FROM workers WHERE email = @email AND role = \'worker\'');
+        .input('emailParam', sql.NVarChar, id)
+        .query('SELECT * FROM workers WHERE email = @emailParam AND role = \'worker\'');
     } else if (email) {
       console.log('Searching by email:', email);
       result = await request
-        .input('email', sql.NVarChar, email)
-        .query('SELECT * FROM workers WHERE email = @email AND role = \'worker\'');
+        .input('emailParam', sql.NVarChar, email)
+        .query('SELECT * FROM workers WHERE email = @emailParam AND role = \'worker\'');
     } else {
       console.log('Searching by ID:', id);
       result = await request
@@ -566,6 +566,8 @@ app.get('/api/workers', authenticateToken, async (req, res) => {
         w.id,
         w.name,
         w.email,
+        w.department,
+        w.position,
         CASE 
           WHEN EXISTS (
             SELECT 1 FROM attendance a 
@@ -628,6 +630,74 @@ app.post('/api/notify-status-change', authenticateToken, async (req, res) => {
     });
   } catch (err) {
     console.error('Error updating status:', err);
+    handleDatabaseError(err, res);
+  }
+});
+
+// Create new worker (admin only)
+app.post('/api/workers', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({
+        success: false,
+        error: 'Unauthorized',
+        message: 'Only admins can create workers'
+      });
+    }
+
+    const { name, email, department, position, password } = req.body;
+
+    // Validate required fields
+    if (!name || !email || !department || !position || !password) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields',
+        message: 'All fields are required'
+      });
+    }
+
+    const request = new sql.Request();
+    
+    // Check if email already exists
+    const checkResult = await request
+      .input('checkEmail', sql.NVarChar, email)
+      .query('SELECT * FROM workers WHERE email = @checkEmail');
+    
+    if (checkResult.recordset.length > 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Email already exists',
+        message: 'A worker with this email already exists'
+      });
+    }
+
+    // Hash password
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // Generate a unique ID
+    const id = `worker_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+    // Insert new worker
+    await request
+      .input('id', sql.NVarChar, id)
+      .input('name', sql.NVarChar, name)
+      .input('email', sql.NVarChar, email)
+      .input('password', sql.NVarChar, hashedPassword)
+      .input('role', sql.NVarChar, 'worker')
+      .input('department', sql.NVarChar, department)
+      .input('position', sql.NVarChar, position)
+      .input('hire_date', sql.DateTime, new Date())
+      .query(`
+        INSERT INTO workers (id, name, email, password, role, department, position, hire_date)
+        VALUES (@id, @name, @email, @password, @role, @department, @position, @hire_date)
+      `);
+
+    res.json({
+      success: true,
+      message: 'Worker created successfully'
+    });
+  } catch (err) {
+    console.error('Error creating worker:', err);
     handleDatabaseError(err, res);
   }
 });
