@@ -9,6 +9,7 @@ function AdminDashboard() {
   const [error, setError] = useState('');
   const [user, setUser] = useState(null);
   const [showCreateUserModal, setShowCreateUserModal] = useState(false);
+  const [selectedDepartment, setSelectedDepartment] = useState(null);
   const [newUser, setNewUser] = useState({
     name: '',
     email: '',
@@ -90,6 +91,20 @@ function AdminDashboard() {
     }
   };
 
+  // Group workers by department
+  const workersByDepartment = workers.reduce((acc, worker) => {
+    const dept = worker.department || 'Unassigned';
+    if (!acc[dept]) {
+      acc[dept] = [];
+    }
+    acc[dept].push(worker);
+    return acc;
+  }, {});
+
+  const handleSeeMore = (department) => {
+    navigate(`/admin/department/${encodeURIComponent(department)}`);
+  };
+
   if (!user || user.role !== 'admin') {
     return <div>Unauthorized access</div>;
   }
@@ -110,6 +125,12 @@ function AdminDashboard() {
                   className="px-4 py-2 bg-white text-red-600 rounded-lg hover:bg-red-50 transition-colors"
                 >
                   Create User
+                </button>
+                <button
+                  onClick={() => navigate('/reports')}
+                  className="px-4 py-2 bg-white text-red-600 rounded-lg hover:bg-red-50 transition-colors"
+                >
+                  Reports
                 </button>
                 <button
                   onClick={handleLogout}
@@ -208,11 +229,6 @@ function AdminDashboard() {
           )}
 
           <div className="p-6">
-            <div className="mb-6">
-              <h3 className="text-xl font-semibold text-gray-900">Worker Management</h3>
-              <p className="text-gray-600 mt-1">Manage and monitor worker attendance</p>
-            </div>
-
             {loading ? (
               <div className="flex justify-center py-8">
                 <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-red-600"></div>
@@ -222,37 +238,76 @@ function AdminDashboard() {
                 <p className="text-red-700">{error}</p>
               </div>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-gray-200">
-                  <thead className="bg-gray-50">
-                    <tr>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Email</th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Department</th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Position</th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody className="bg-white divide-y divide-gray-200">
-                    {workers.map((worker) => (
-                      <tr key={worker.id} className="hover:bg-gray-50">
-                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{worker.name}</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{worker.email}</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{worker.department}</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{worker.position}</td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <span className={`px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                            worker.status === 'Active' 
-                              ? 'bg-green-100 text-green-800' 
-                              : 'bg-gray-100 text-gray-800'
-                          }`}>
-                            {worker.status}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+                {Object.entries(workersByDepartment).map(([department, departmentWorkers]) => (
+                  <motion.div
+                    key={department}
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    onClick={() => setSelectedDepartment(selectedDepartment === department ? null : department)}
+                    className={`bg-white rounded-2xl shadow-lg overflow-hidden cursor-pointer border-2 transition-all duration-300 ${
+                      selectedDepartment === department 
+                        ? 'border-red-400 shadow-xl' 
+                        : 'border-gray-100 hover:border-red-200'
+                    }`}
+                  >
+                    <div className="p-6 bg-gradient-to-br from-red-500 to-red-600">
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <h3 className="text-xl font-bold text-white">{department}</h3>
+                          <p className="text-red-100 mt-1">{departmentWorkers.length} employees</p>
+                        </div>
+                        <div className="bg-white/20 rounded-lg px-3 py-1">
+                          <span className="text-white text-sm font-medium">
+                            {departmentWorkers.filter(w => w.status === 'Active').length} Active
                           </span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                        </div>
+                      </div>
+                    </div>
+                    {selectedDepartment === department && (
+                      <div className="p-6 border-t border-gray-100">
+                        <div className="space-y-4">
+                          {departmentWorkers.map((worker) => (
+                            <div 
+                              key={worker.id} 
+                              className="flex items-center justify-between p-4 bg-gray-50 rounded-xl hover:bg-gray-100 transition-colors"
+                            >
+                              <div className="flex items-center space-x-4">
+                                <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center">
+                                  <span className="text-red-600 font-semibold">
+                                    {worker.name.split(' ').map(n => n[0]).join('')}
+                                  </span>
+                                </div>
+                                <div>
+                                  <p className="font-medium text-gray-900">{worker.name}</p>
+                                  <p className="text-sm text-gray-600">{worker.position}</p>
+                                </div>
+                              </div>
+                              <div className="flex items-center space-x-3">
+                                <span className={`px-3 py-1 text-sm font-medium rounded-full ${
+                                  worker.status === 'Active' 
+                                    ? 'bg-green-100 text-green-800' 
+                                    : 'bg-gray-100 text-gray-800'
+                                }`}>
+                                  {worker.status}
+                                </span>
+                              </div>
+                            </div>
+                          ))}
+                          <button
+                            onClick={() => handleSeeMore(department)}
+                            className="w-full mt-4 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors flex items-center justify-center space-x-2"
+                          >
+                            <span>See More</span>
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                              <path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd" />
+                            </svg>
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </motion.div>
+                ))}
               </div>
             )}
           </div>

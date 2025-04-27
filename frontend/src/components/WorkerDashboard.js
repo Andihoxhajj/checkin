@@ -19,15 +19,19 @@ function WorkerDashboard() {
   const fetchStatus = async () => {
     try {
       const token = localStorage.getItem('token');
-      const response = await axios.get(`http://localhost:5000/api/worker/attendance`, {
+      const response = await axios.get(`http://localhost:5000/api/worker/status`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }
       });
 
-      const records = response.data.records;
-      const activeRecord = records.find(record => !record.check_out_time);
-      setStatus(activeRecord ? 'checked-in' : 'checked-out');
+      if (response.data.success) {
+        const { isCheckedIn } = response.data.data;
+        setStatus(isCheckedIn ? 'checked-in' : 'checked-out');
+      } else {
+        setError('Failed to fetch status');
+        setStatus('error');
+      }
     } catch (err) {
       console.error('Error fetching status:', err);
       setError('Failed to fetch status');

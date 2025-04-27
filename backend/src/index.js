@@ -400,17 +400,22 @@ app.post('/api/check-in', authenticateToken, async (req, res) => {
 
     const request = new sql.Request();
 
-    // Check if worker already has an active check-in
-    const activeCheck = await request
+    // Check if worker has already checked in today
+    const todayCheck = await request
       .input('checkWorkerId', sql.NVarChar, workerId)
-      .query('SELECT * FROM attendance WHERE worker_id = @checkWorkerId AND check_out_time IS NULL');
+      .input('today', sql.DateTime, new Date())
+      .query(`
+        SELECT * FROM attendance 
+        WHERE worker_id = @checkWorkerId 
+        AND CAST(check_in_time AS DATE) = CAST(@today AS DATE)
+      `);
 
-    if (activeCheck.recordset.length > 0) {
-      console.log('Worker already checked in:', workerId);
+    if (todayCheck.recordset.length > 0) {
+      console.log('Worker already checked in today:', workerId);
       return res.status(400).json({
         success: false,
-        error: 'Already checked in',
-        message: 'You are already checked in'
+        error: 'Already checked in today',
+        message: 'You have already checked in today'
       });
     }
 
@@ -445,45 +450,61 @@ app.post('/api/check-out', authenticateToken, async (req, res) => {
   try {
     const workerId = req.user.id;
     console.log('Check-out attempt for worker:', workerId);
+    const today = new Date();
+    console.log('Current date/time:', today);
 
     const request = new sql.Request();
 
-    // Get the active check-in record
-    const activeCheck = await request
+    // Get the most recent unchecked-out record for this worker, regardless of date
+    const activeCheckIn = await request
       .input('checkWorkerId', sql.NVarChar, workerId)
-      .query('SELECT * FROM attendance WHERE worker_id = @checkWorkerId AND check_out_time IS NULL');
+      .query(`
+        SELECT TOP 1 * FROM attendance 
+        WHERE worker_id = @checkWorkerId 
+        AND check_out_time IS NULL
+        ORDER BY check_in_time DESC
+      `);
 
-    if (activeCheck.recordset.length === 0) {
+    console.log('Active check-in records found:', activeCheckIn.recordset.length);
+    if (activeCheckIn.recordset.length === 0) {
       console.log('No active check-in found for worker:', workerId);
       return res.status(400).json({
         success: false,
         error: 'Not checked in',
-        message: 'You are not checked in'
+        message: 'You have no active check-in record'
       });
     }
 
-    const checkInTime = new Date(activeCheck.recordset[0].check_in_time);
+    const checkInTime = new Date(activeCheckIn.recordset[0].check_in_time);
+    console.log('Check-in time:', checkInTime);
     const checkOutTime = new Date();
+    console.log('Check-out time:', checkOutTime);
     const totalHours = (checkOutTime - checkInTime) / (1000 * 60 * 60); // Convert to hours
+    console.log('Total hours calculated:', totalHours);
 
     // Update the check-out record
-    await request
+    const updateResult = await request
       .input('updateWorkerId', sql.NVarChar, workerId)
       .input('checkOutTime', sql.DateTime, checkOutTime)
       .input('totalHours', sql.Decimal, totalHours)
+      .input('recordId', sql.Int, activeCheckIn.recordset[0].id)
       .query(`
         UPDATE attendance 
         SET check_out_time = @checkOutTime,
             total_hours = @totalHours,
             updated_at = GETDATE()
-        WHERE worker_id = @updateWorkerId AND check_out_time IS NULL
+        WHERE id = @recordId
+        AND worker_id = @updateWorkerId 
+        AND check_out_time IS NULL
       `);
 
+    console.log('Update result - rows affected:', updateResult.rowsAffected[0]);
     console.log('Check-out successful for worker:', workerId);
     res.json({
       success: true,
       message: 'Check-out successful',
       data: {
+        checkInTime: checkInTime,
         checkOutTime: checkOutTime,
         totalHours: totalHours.toFixed(2)
       }
@@ -533,10 +554,10 @@ app.get('/api/worker/attendance', authenticateToken, async (req, res) => {
     const workerId = req.user.id;
     const request = new sql.Request();
     const result = await request
-      .input('workerId', sql.NVarChar, workerId)
+      .input('attendanceWorkerId', sql.NVarChar, workerId)
       .query(`
         SELECT * FROM attendance 
-        WHERE worker_id = @workerId
+        WHERE worker_id = @attendanceWorkerId
         ORDER BY check_in_time DESC
       `);
 
@@ -698,6 +719,190 @@ app.post('/api/workers', authenticateToken, async (req, res) => {
     });
   } catch (err) {
     console.error('Error creating worker:', err);
+    handleDatabaseError(err, res);
+  }
+});
+
+// Get detailed time report for a worker
+app.get('/api/attendance/detailed/:workerId', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({
+        success: false,
+        error: 'Unauthorized',
+        message: 'Only admins can view detailed time reports'
+      });
+    }
+
+    const { workerId } = req.params;
+
+    // Get daily hours - only count first check-in of each day
+    const dailyRequest = new sql.Request();
+    const dailyHours = await dailyRequest
+      .input('workerId', sql.NVarChar, workerId)
+      .query(`
+        WITH FirstCheckIn AS (
+          SELECT 
+            worker_id,
+            CAST(check_in_time AS DATE) as date,
+            MIN(check_in_time) as first_check_in,
+            MAX(check_out_time) as last_check_out,
+            SUM(total_hours) as total_hours
+          FROM attendance 
+          WHERE worker_id = @workerId
+          AND check_out_time IS NOT NULL
+          GROUP BY worker_id, CAST(check_in_time AS DATE)
+        )
+        SELECT 
+          date,
+          total_hours
+        FROM FirstCheckIn
+        ORDER BY date DESC
+      `);
+
+    // Get monthly hours - only count first check-in of each day
+    const monthlyRequest = new sql.Request();
+    const monthlyHours = await monthlyRequest
+      .input('workerId', sql.NVarChar, workerId)
+      .query(`
+        WITH FirstCheckIn AS (
+          SELECT 
+            worker_id,
+            CAST(check_in_time AS DATE) as date,
+            MIN(check_in_time) as first_check_in,
+            MAX(check_out_time) as last_check_out,
+            SUM(total_hours) as total_hours
+          FROM attendance 
+          WHERE worker_id = @workerId
+          AND check_out_time IS NOT NULL
+          GROUP BY worker_id, CAST(check_in_time AS DATE)
+        )
+        SELECT 
+          YEAR(date) as year,
+          MONTH(date) as month,
+          SUM(total_hours) as total_hours
+        FROM FirstCheckIn
+        GROUP BY YEAR(date), MONTH(date)
+        ORDER BY year DESC, month DESC
+      `);
+
+    // Get yearly hours - only count first check-in of each day
+    const yearlyRequest = new sql.Request();
+    const yearlyHours = await yearlyRequest
+      .input('workerId', sql.NVarChar, workerId)
+      .query(`
+        WITH FirstCheckIn AS (
+          SELECT 
+            worker_id,
+            CAST(check_in_time AS DATE) as date,
+            MIN(check_in_time) as first_check_in,
+            MAX(check_out_time) as last_check_out,
+            SUM(total_hours) as total_hours
+          FROM attendance 
+          WHERE worker_id = @workerId
+          AND check_out_time IS NOT NULL
+          GROUP BY worker_id, CAST(check_in_time AS DATE)
+        )
+        SELECT 
+          YEAR(date) as year,
+          SUM(total_hours) as total_hours
+        FROM FirstCheckIn
+        GROUP BY YEAR(date)
+        ORDER BY year DESC
+      `);
+
+    res.json({
+      success: true,
+      data: {
+        daily: dailyHours.recordset,
+        monthly: monthlyHours.recordset,
+        yearly: yearlyHours.recordset
+      }
+    });
+  } catch (err) {
+    console.error('Error fetching detailed time report:', err);
+    handleDatabaseError(err, res);
+  }
+});
+
+// Get worker's attendance summary
+app.get('/api/attendance/summary/:workerId', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({
+        success: false,
+        error: 'Unauthorized',
+        message: 'Only admins can view attendance summaries'
+      });
+    }
+
+    const { workerId } = req.params;
+    const request = new sql.Request();
+
+    const result = await request
+      .input('summaryWorkerId', sql.NVarChar, workerId)
+      .query(`
+        SELECT 
+          COUNT(*) as total_days,
+          SUM(CASE WHEN check_out_time IS NOT NULL THEN 1 ELSE 0 END) as completed_days,
+          MIN(check_in_time) as first_check_in,
+          MAX(check_out_time) as last_check_out,
+          SUM(total_hours) as total_hours
+        FROM attendance 
+        WHERE worker_id = @summaryWorkerId
+      `);
+
+    res.json({
+      success: true,
+      data: result.recordset[0]
+    });
+  } catch (err) {
+    console.error('Error fetching attendance summary:', err);
+    handleDatabaseError(err, res);
+  }
+});
+
+// Get worker's status (checked in or out)
+app.get('/api/worker/status', authenticateToken, async (req, res) => {
+  try {
+    const workerId = req.user.id;
+    const today = new Date();
+    console.log('Checking status for worker:', workerId, 'Date:', today);
+
+    const request = new sql.Request();
+    const result = await request
+      .input('statusWorkerId', sql.NVarChar, workerId)
+      .query(`
+        SELECT TOP 1 * FROM attendance 
+        WHERE worker_id = @statusWorkerId 
+        AND check_out_time IS NULL
+        ORDER BY check_in_time DESC
+      `);
+
+    console.log('Status check records found:', result.recordset.length);
+    
+    if (result.recordset.length > 0) {
+      const record = result.recordset[0];
+      console.log('Worker is checked in:', record);
+      res.json({
+        success: true,
+        data: {
+          isCheckedIn: true,
+          checkInTime: record.check_in_time,
+          record: record
+        }
+      });
+    } else {
+      console.log('Worker is not checked in');
+      res.json({
+        success: true,
+        data: {
+          isCheckedIn: false
+        }
+      });
+    }
+  } catch (err) {
+    console.error('Error checking worker status:', err);
     handleDatabaseError(err, res);
   }
 });

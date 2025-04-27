@@ -3,6 +3,8 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import Login from './components/Login';
 import WorkerDashboard from './components/WorkerDashboard';
 import AdminDashboard from './components/AdminDashboard';
+import DepartmentDetail from './components/DepartmentDetail';
+import Reports from './components/Reports';
 
 const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
 
@@ -50,6 +52,22 @@ function App() {
               <AdminDashboard />
             </ProtectedRoute>
           } 
+        />
+        <Route 
+          path="/admin/department/:department" 
+          element={
+            <ProtectedRoute requiredRole="admin">
+              <DepartmentDetail />
+            </ProtectedRoute>
+          } 
+        />
+        <Route
+          path="/reports"
+          element={
+            <ProtectedRoute requiredRole="admin">
+              <Reports />
+            </ProtectedRoute>
+          }
         />
         <Route path="/" element={<Navigate to="/login" replace />} />
         <Route path="*" element={<Navigate to="/login" replace />} />
